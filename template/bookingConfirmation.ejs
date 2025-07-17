@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Booking Confirmation</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .logo { max-width: 150px; }
+        h1 { color: #2c3e50; }
+        .booking-details { background: #f9f9f9; padding: 20px; border-radius: 5px; margin: 20px 0; }
+        .detail-row { margin-bottom: 10px; }
+        .detail-label { font-weight: bold; display: inline-block; width: 120px; }
+        .footer { margin-top: 30px; text-align: center; font-size: 0.9em; color: #7f8c8d; }
+        .button { display: inline-block; padding: 10px 20px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Booking Confirmed!</h1>
+        <p>Thank you for booking with <%= companyName %></p>
+    </div>
+
+    <div class="booking-details">
+        <div class="detail-row">
+            <span class="detail-label">Tour:</span>
+            <span><%= tourName %></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Date:</span>
+            <span><%= bookingDate %></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Reference:</span>
+            <span><%= bookingReference %></span>
+        </div>
+        <div class="detail-row">
+            <span class="detail-label">Participants:</span>
+            <span><%= participants %></span>
+        </div>
+    </div>
+
+    <p>Dear <%= customerName %>,</p>
+    <p>Your booking has been successfully confirmed. We're excited to have you join us for this amazing experience!</p>
+    <p>Please arrive at least 15 minutes before the scheduled start time at the meeting point specified in your tour details.</p>
+
+    <div style="text-align: center;">
+        <a href="<%= process.env.BOOKING_PORTAL_URL %>" class="button">View Your Booking</a>
+    </div>
+
+    <p>If you have any questions, please reply to this email or contact our customer service.</p>
+
+    <div class="footer">
+        <p>&copy; <%= year %> <%= companyName %>. All rights reserved.</p>
+    </div>
+</body>
+</html>
