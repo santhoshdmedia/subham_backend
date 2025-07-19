@@ -1,106 +1,116 @@
-const emailService = require('../utils/Emailservices');
+const nodemailer = require("nodemailer");
+require('dotenv').config();
 
-const path = require('path');
-const ejs = require('ejs');
-const fs = require('fs/promises');
+// Email Configuration
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER || "devconsoledmedia@gmail.com",
+    pass: process.env.EMAIL_PASSWORD || "veyw kcgr ileo rzdm",
+  },
+  tls: {
+    rejectUnauthorized: process.env.NODE_ENV === 'production'
+  }
+});
 
-exports.confirmBooking = async (req, res) => {
-    try {
-        const { 
-            customerEmail, 
-            customerName, 
-            tourName, 
-            bookingDate, 
-            bookingReference, 
-            participants = 1 
-        } = req.body;
+// Verify connection
+transporter.verify((error) => {
+  if (error) {
+    console.error('Mail server error:', error);
+  } else {
+    console.log('Mail server ready');
+  }
+});
 
-        // Validate inputs
-        const requiredFields = { customerEmail, customerName, tourName, bookingDate, bookingReference };
-        const missingFields = Object.entries(requiredFields)
-            .filter(([_, value]) => !value)
-            .map(([key]) => key);
+// Email Templates
+const templates = {
+  inquiryNotification: (values) => `
+    <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9;">
+      <div style="max-width: 600px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,0.1);">
+        <h2 style="background:#007BFF; color: white; padding: 12px; border-radius: 5px; text-align: center; font-size: 20px;">
+          📩 New Inquiry Notification
+        </h2>
+        <p style="font-size: 16px; color: #333;">
+          <strong>Name:</strong> ${values.name}<br>
+          <strong>Email:</strong> ${values.email}<br>
+          <strong>Phone:</strong> ${values.phone || 'Not provided'}<br>
+          <strong>Message:</strong><br> ${values.message}
+        </p>
+        <hr style="border: 0; border-top: 1px solid #ddd;">
+        <p style="text-align: center; font-size: 14px; color: #666;">
+          Thank you for reaching out! Our team will get back to you soon.
+        </p>
+      </div>
+    </div>
+  `,
 
-        if (missingFields.length > 0) {
-            return res.status(400).json({ 
-                success: false, 
-                error: `Missing required fields: ${missingFields.join(', ')}`
-            });
-        }
-
-        // Render email template
-        const templatePath = path.join(__dirname, '../template/bookingConfirmation.ejs');
-        
-        try {
-            // Check if template exists
-            await fs.access(templatePath);
-        } catch (err) {
-            console.error('Template file not found:', templatePath);
-            return res.status(500).json({
-                success: false,
-                error: 'Email template configuration error'
-            });
-        }
-
-        const formattedDate = new Date(bookingDate).toLocaleDateString('en-US', {
-            weekday: 'long',
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric'
-        });
-
-        const emailHtml = await ejs.renderFile(
-            templatePath,
-            {
-                customerName,
-                tourName,
-                bookingDate: formattedDate,
-                bookingReference,
-                participants,
-                currentYear: new Date().getFullYear(),
-                companyName: process.env.COMPANY_NAME || 'Adventure Tours',
-                bookingPortalUrl: process.env.BOOKING_PORTAL_URL || 'https://yourwebsite.com/bookings',
-                supportEmail: process.env.SUPPORT_EMAIL || 'support@example.com',
-                // Helpers
-                formatCurrency: (amount) => {
-                    return new Intl.NumberFormat('en-IN', {
-                        style: 'currency',
-                        currency: 'INR'
-                    }).format(amount);
-                }
-            },
-            {
-                root: path.join(__dirname, '../templates'),
-                cache: process.env.NODE_ENV === 'production'
-            }
-        );
-
-        // Send email
-        const mailOptions = {
-            from: `"${process.env.COMPANY_NAME || 'Adventure Tours'}" <${process.env.EMAIL_FROM || 'noreply@example.com'}>`,
-            to: customerEmail,
-            subject: `Booking Confirmation: ${tourName} (Ref: ${bookingReference})`,
-            html: emailHtml,
-            text: `Dear ${customerName},\n\nYour booking for "${tourName}" on ${formattedDate} is confirmed!\n\nBooking Reference: ${bookingReference}\nParticipants: ${participants}\n\nThank you for choosing us!`,
-            priority: 'high'
-        };
-
-        const sendResult = await transporter.sendMail(mailOptions);
-
-        res.json({
-            success: true,
-            message: 'Booking confirmed and confirmation email sent',
-            bookingReference,
-            messageId: sendResult.messageId
-        });
-
-    } catch (error) {
-        console.error('Booking confirmation error:', error);
-        res.status(500).json({ 
-            success: false, 
-            error: process.env.NODE_ENV === 'development' 
-                ? error.message 
-                : 'Failed to process booking' 
-        });
-    }
+  confirmationEmail: (name = 'User') => `
+    <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f9f9f9;">
+      <div style="max-width: 600px; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 3px 12px rgba(0,0,0,0.1);">
+        <h2 style="color: #007BFF; text-align: center;">Thank you, ${name}!</h2>
+        <p>We've received your inquiry and will respond within 24 hours.</p>
+      </div>
+    </div>
+  `
 };
+
+// Email Service Functions
+const emailService = {
+  sendInquiryNotification: async (values) => {
+    try {
+      const mailOptions = {
+        from: `"${values.name}" <${values.email}>`,
+        to: process.env.ADMIN_EMAIL || "santhoshmkr0723@gmail.com",
+        subject: `New Inquiry from ${values.name}`,
+        html: templates.inquiryNotification(values)
+      };
+      
+      const info = await transporter.sendMail(mailOptions);
+      console.log('Inquiry notification sent:', info.messageId);
+      return true;
+    } catch (error) {
+      console.error('Error sending inquiry notification:', error);
+      return false;
+    }
+  },
+
+  sendConfirmationEmail: async (email, name) => {
+    try {
+      const mailOptions = {
+        from: process.env.EMAIL_FROM || "devconsole@gmail.com",
+        to: email,
+        subject: "Thank you for your inquiry",
+        html: templates.confirmationEmail(name)
+      };
+      
+      const info = await transporter.sendMail(mailOptions);
+      console.log('Confirmation email sent:', info.messageId);
+      return true;
+    } catch (error) {
+      console.error('Error sending confirmation email:', error);
+      return false;
+    }
+  },
+
+  handleInquiry: async (req, res) => {
+    const { email, name, phone, message } = req.body;
+    
+    try {
+      // Send to admin
+      await emailService.sendInquiryNotification({ email, name, phone, message });
+      
+      // Send to user
+      await emailService.sendConfirmationEmail(email, name);
+      
+      res.json({ success: true, message: "Emails sent successfully" });
+    } catch (error) {
+      console.error('Inquiry processing error:', error);
+      res.status(500).json({ 
+        success: false, 
+        message: "Failed to process inquiry" 
+      });
+    }
+  }
+};
+
+module.exports = emailService;
