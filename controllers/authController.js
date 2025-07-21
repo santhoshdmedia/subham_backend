@@ -1,78 +1,59 @@
 const crypto = require("crypto");
 const twilio = require("twilio");
+const jwt = require("jsonwebtoken");
 const User = require("../models/UserOtp");
 
-// Load credentials from environment variables
+// Configuration
+const JWT_SECRET = "T2s$w9qZ8@uG5#1!pR";
+const JWT_EXPIRES_IN =  "30d"; // 30 days
+
+// Twilio setup
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const twilioPhone = process.env.TWILIO_PHONE_NUMBER;
 const client = twilio(accountSid, authToken);
 
-// In-memory storage for OTPs (consider Redis in production)
+// OTP storage
 const otpStorage = new Map();
 
-// Generate secure 6-digit OTP
+// Helper functions
 function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
 }
 
-// Validate and format phone number
 function formatPhone(phone) {
-  // Remove all non-digit characters
   const cleaned = `${phone}`.replace(/\D/g, "");
-
-  // Handle Indian numbers (add country code if missing)
-  if (cleaned.length === 10) {
-    return `+91${cleaned}`;
-  }
-
-  // If already has country code
-  if (cleaned.length === 12 && cleaned.startsWith("91")) {
-    return `+${cleaned}`;
-  }
-
-  // For other international numbers
-  if (cleaned.length > 10 && !cleaned.startsWith("+")) {
-    return `+${cleaned}`;
-  }
-
+  if (cleaned.length === 10) return `+91${cleaned}`;
+  if (cleaned.length === 12 && cleaned.startsWith("91")) return `+${cleaned}`;
+  if (cleaned.length > 10 && !cleaned.startsWith("+")) return `+${cleaned}`;
   return null;
 }
 
-exports.health = async (req, res, next) => {
-  try {
-    const response = {
-      success: true,
-      message: "healthy",
-    };
-    res.json(response);
-  } catch (error) {
-    next(err);
-  }
+function generateToken(userId) {
+  return jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
+
+// Controller functions
+exports.health = async (req, res) => {
+  res.json({ success: true, message: "healthy" });
 };
 
-exports.sendOTP = async (req, res, next) => {
+exports.sendOTP = async (req, res) => {
   try {
     const { name, phone, email } = req.body;
 
     if (!phone) {
-      return res.status(400).json({
-        success: false,
-        error: "Phone number is required",
-      });
+      return res.status(400).json({ success: false, error: "Phone number is required" });
     }
 
     const formattedNumber = formatPhone(phone);
     if (!formattedNumber) {
       return res.status(400).json({
         success: false,
-        error:
-          "Invalid phone number format. Please use 10-digit Indian number or international format",
+        error: "Invalid phone number format. Use 10-digit Indian number or international format",
       });
     }
-    
 
-    // Check if recent OTP exists and hasn't expired
     const existingOTP = otpStorage.get(formattedNumber);
     if (existingOTP && existingOTP.expiresAt > Date.now()) {
       return res.status(429).json({
@@ -87,39 +68,31 @@ exports.sendOTP = async (req, res, next) => {
     otpStorage.set(formattedNumber, {
       otp,
       expiresAt: Date.now() + ttl,
-      attempts: 0, // Track verification attempts
-      userData: { name, phone, email }, // Store user data for later
+      attempts: 0,
+      userData: { name, phone, email },
     });
 
-    // Send OTP via Twilio
     await client.messages.create({
       body: `Your verification code is: ${otp}. Valid for 5 minutes.`,
       to: formattedNumber,
       from: twilioPhone,
     });
 
-    // In development, return the OTP for testing
-    const response = {
-      success: true,
-      message: "OTP sent successfully",
-    };
-
-    if (process.env.NODE_ENV === "development") {
-      response.debug = { otp };
-    }
+    const response = { success: true, message: "OTP sent successfully" };
+    if (process.env.NODE_ENV === "development") response.debug = { otp };
 
     res.json(response);
   } catch (err) {
-    next(err);
+    console.error("OTP send error:", err);
+    res.status(500).json({ success: false, error: "Failed to send OTP" });
   }
 };
 
-exports.verifyOTP = async (req, res, next) => {
+exports.verifyOTP = async (req, res) => {
   try {
     const { phone, otp, name, email, password } = req.body;
 
-    // Validate required fields
-    if (!phone || !otp || !password) { 
+    if (!phone || !otp || !password) {
       return res.status(400).json({
         success: false,
         error: "Phone number, OTP and password are required",
@@ -142,7 +115,6 @@ exports.verifyOTP = async (req, res, next) => {
       });
     }
 
-    // Check attempts
     if (storedData.attempts >= 3) {
       otpStorage.delete(formattedNumber);
       return res.status(400).json({
@@ -160,21 +132,17 @@ exports.verifyOTP = async (req, res, next) => {
     }
 
     if (storedData.otp !== otp) {
-      // Increment failed attempts
       storedData.attempts += 1;
       otpStorage.set(formattedNumber, storedData);
-
       return res.status(400).json({
         success: false,
         error: "Invalid OTP",
         attemptsLeft: 3 - storedData.attempts,
       });
     }
-    // OTP verified successfully
-    try {
-      const userData = { name, email, phone, password }; // Include password
 
-      // Check if user exists by phone or email
+    try {
+      const userData = { name, email, phone, password };
       const existingUser = await User.findOne({
         $or: [{ phone: userData.phone }, { email: userData.email }],
       });
@@ -182,35 +150,34 @@ exports.verifyOTP = async (req, res, next) => {
       otpStorage.delete(formattedNumber);
 
       if (existingUser) {
-        return res.status(400).json({ // Changed to 400 since duplicate isn't a success
+        return res.status(400).json({
           success: false,
           error: "User already exists with this phone/email",
         });
       }
 
-      // Create new user - password will be hashed by pre-save hook
       const newUser = new User(userData);
       const savedUser = await newUser.save();
+      const token = generateToken(savedUser._id);
 
       return res.json({
         success: true,
         message: "OTP verified and user registered successfully",
+        token,
         user: {
           _id: savedUser._id,
           name: savedUser.name,
           email: savedUser.email,
           phone: savedUser.phone,
-          // Don't send back password
         },
         isNewUser: true,
       });
     } catch (dbError) {
       console.error("Database error:", dbError);
       if (dbError.code === 11000) {
-        const duplicateField = Object.keys(dbError.keyPattern)[0];
         return res.status(409).json({
           success: false,
-          error: `User with this ${duplicateField} already exists`,
+          error: `User with this ${Object.keys(dbError.keyPattern)[0]} already exists`,
         });
       }
       return res.status(500).json({
@@ -219,15 +186,15 @@ exports.verifyOTP = async (req, res, next) => {
       });
     }
   } catch (err) {
-    next(err);
+    console.error("OTP verification error:", err);
+    res.status(500).json({ success: false, error: "Internal server error" });
   }
 };
 
-exports.Login = async (req, res, next) => {
+exports.Login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // 1. Check if email and password exist
     if (!email || !password) {
       return res.status(400).json({
         success: false,
@@ -235,9 +202,8 @@ exports.Login = async (req, res, next) => {
       });
     }
 
-    // 2. Check if user exists and password is correct
     const user = await User.findOne({ email: email.toLowerCase().trim() })
-                          .select('+password'); // Explicitly include password
+                          .select('+password');
 
     if (!user || !(await user.comparePassword(password))) {
       return res.status(401).json({
@@ -246,25 +212,57 @@ exports.Login = async (req, res, next) => {
       });
     }
 
-    // 3. If everything ok, send token/success response
-    const userResponse = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      phone: user.phone,
-      createdAt: user.createdAt
-    };
-
-    // Here you would typically generate a JWT token
-    // const token = generateToken(user._id);
+    const token = generateToken(user._id);
 
     res.status(200).json({
       success: true,
-      // token, // Include if using JWT
-      user: userResponse
+      token,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        createdAt: user.createdAt
+      }
     });
-
   } catch (err) {
-    next(err);
+    console.error("Login error:", err);
+    res.status(500).json({ success: false, error: "Internal server error" });
+  }
+};
+
+// Auth middleware
+exports.protect = async (req, res, next) => {
+  try {
+    let token;
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+      token = req.headers.authorization.split(' ')[1];
+    }
+
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        error: 'Not authorized to access this route'
+      });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const user = await User.findById(decoded.id);
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        error: 'User no longer exists'
+      });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    console.error("Auth middleware error:", error);
+    return res.status(401).json({
+      success: false,
+      error: 'Not authorized to access this route'
+    });
   }
 };

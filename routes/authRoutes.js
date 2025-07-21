@@ -28,8 +28,8 @@ const authLimiter = rateLimit({
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user: process.env.EMAIL_USER || "devconsoledmedia@gmail.com",
-    pass: process.env.EMAIL_PASSWORD || "veyw kcgr ileo rzdm",
+    user:  process.env.EMAIL_USER|| "subhamtours3@gmail.",
+    pass:  process.env.EMAIL_PASSWORD||"cnwl mruv aluf ekhy",
   },
   tls: {
     rejectUnauthorized: process.env.NODE_ENV === 'production'
@@ -73,7 +73,7 @@ const otpEmailTemplate = (otp) => `
 const sendOTPEmail = async (email, otp) => {
   try {
     const mailOptions = {
-      from: process.env.EMAIL_FROM || "no-reply@example.com",
+      from: process.env.EMAIL_FROM || "no-reply@subham.com",
       to: email,
       subject: "Your Verification Code",
       html: otpEmailTemplate(otp)
@@ -258,7 +258,7 @@ const sendInquiryNotification = async (values) => {
   // Prepare email options
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Notification System'}" <${fromEmail}>`,
-    to: process.env.ADMIN_EMAIL || "vikashdigitally@gmail.com",
+    to: process.env.ADMIN_EMAIL || "subhamtours3@gmail.com",
     subject: `New Inquiry: ${safeName.substring(0, 50)}`, // Limit length
     html: emailTemplates.inquiryNotification({
       name: safeName,
@@ -308,7 +308,7 @@ const sendInquiryNotification = async (values) => {
 const sendConfirmationEmail = async (email, name) => {
   try {
     const mailOptions = {
-      from: process.env.EMAIL_FROM || "devconsole@gmail.com",
+      from: process.env.EMAIL_FROM || "subhamtours3@gmail.com",
       to: email,
       subject: "Thank you for your inquiry",
       html: emailTemplates.confirmationEmail(name)
