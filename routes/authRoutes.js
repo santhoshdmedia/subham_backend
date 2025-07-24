@@ -1,13 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const authController = require('../controllers/authController');
-const packageControlller = require('../controllers/packageController')
 const rateLimit = require('express-rate-limit');
 const nodemailer = require("nodemailer");
 const crypto = require('crypto');
 require('dotenv').config();
-const User =require('../models/UserOtp');
-const Inquiry=require('../models/email');
+const jwt = require("jsonwebtoken");
+const User = require('../models/UserOtp');
+const Inquiry = require('../models/email');
 
 // Rate limiting configuration
 const otpLimiter = rateLimit({
@@ -28,8 +27,8 @@ const authLimiter = rateLimit({
 const transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
-    user:  process.env.EMAIL_USER|| "subhamtours3@gmail.",
-    pass:  process.env.EMAIL_PASSWORD||"cnwl mruv aluf ekhy",
+    user: process.env.EMAIL_USER || "subhamtours3@gmail.com",
+    pass: process.env.EMAIL_PASSWORD || "cnwl mruv aluf ekhy",
   },
   tls: {
     rejectUnauthorized: process.env.NODE_ENV === 'production'
@@ -44,6 +43,7 @@ transporter.verify((error) => {
     console.log('Mail server ready');
   }
 });
+
 // OTP Storage (in-memory for simplicity, use Redis in production)
 const otpStorage = new Map();
 
@@ -88,6 +88,32 @@ const sendOTPEmail = async (email, otp) => {
   }
 };
 
+// JWT Configuration
+const JWT_SECRET = process.env.JWT_SECRET || "T2s$w9qZ8@uG5#1!pR";
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "30d";
+
+// Generate JWT Token
+const generateToken = (userId) => {
+  return jwt.sign({ id: userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+};
+
+// Verify JWT Token Middleware
+const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  
+  if (!token) {
+    return res.status(401).json({ success: false, error: "No token provided" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.id;
+    next();
+  } catch (error) {
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
+  }
+};
+
 // Routes
 router.post('/send-mail-otp', otpLimiter, async (req, res) => {
   const { email } = req.body;
@@ -96,76 +122,131 @@ router.post('/send-mail-otp', otpLimiter, async (req, res) => {
     return res.status(400).json({ success: false, error: "Email is required" });
   }
 
-  // Generate and store OTP
-  const otp = generateOTP();
-  otpStorage.set(email, {
-    otp,
-    expiresAt: Date.now() + 300000 // 5 minutes
-  });
+  // Check if user already exists
+  try {
+    const existingUser = await User.findOne({ email });
+    
+    if (existingUser) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "User with this email already exists" 
+      });
+    }
 
-  // Send OTP via email
-  const sent = await sendOTPEmail(email, otp);
+    // Generate and store OTP
+    const otp = generateOTP();
+    otpStorage.set(email, {
+      otp,
+      expiresAt: Date.now() + 300000 // 5 minutes
+    });
 
-  if (sent) {
-    res.json({ success: true, message: "OTP sent successfully" });
-  } else {
-    res.status(500).json({ success: false, error: "Failed to send OTP" });
+    // Send OTP via email
+    const sent = await sendOTPEmail(email, otp);
+
+    if (sent) {
+      res.json({ success: true, message: "OTP sent successfully" });
+    } else {
+      res.status(500).json({ success: false, error: "Failed to send OTP" });
+    }
+  } catch (error) {
+    console.error("Error checking user existence:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: "Server error while checking user existence" 
+    });
   }
 });
 
 router.post('/verify-mail-otp', async (req, res) => {
-  const { email, otp, name, phone, password } = req.body;
+  const { email, otp, name, phone } = req.body;
 
   // Validate required fields
-  if (!email || !otp || !name || !phone || !password) {
+  if (!email || !otp || !name || !phone) {
     return res.status(400).json({ 
       success: false, 
-      error: "Email, OTP, name, phone and password are required" 
+      error: "Email, OTP, name, and phone are required",
+      missingFields: {
+        email: !email,
+        otp: !otp,
+        name: !name,
+        phone: !phone
+      }
     });
   }
- 
 
-  // Verify OTP first
+  // Basic email format validation
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ 
+      success: false, 
+      error: "Invalid email format" 
+    });
+  }
+
+  // Verify OTP
   const storedOtp = otpStorage.get(email);
   if (!storedOtp) {
-    return res.status(400).json({ success: false, error: "OTP not found or expired" });
+    return res.status(400).json({ 
+      success: false, 
+      error: "OTP not found or expired" 
+    });
   }
 
   if (Date.now() > storedOtp.expiresAt) {
     otpStorage.delete(email);
-    return res.status(400).json({ success: false, error: "OTP expired" });
+    return res.status(400).json({ 
+      success: false, 
+      error: "OTP expired" 
+    });
   }
 
   if (storedOtp.otp !== otp) {
-    return res.status(400).json({ success: false, error: "Invalid OTP" });
+    return res.status(400).json({ 
+      success: false, 
+      error: "Invalid OTP" 
+    });
   }
 
   // OTP is valid, proceed with registration
   try {
-    const userData = { name, email, phone, password };
+    const userData = { 
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      phone: phone.trim()
+    };
 
     // Check if user exists
     const existingUser = await User.findOne({
-      $or: [{ phone }, { email }],
+      $or: [
+        { phone: userData.phone },
+        { email: userData.email }
+      ],
     });
 
     if (existingUser) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         error: "User already exists with this phone/email",
+        conflict: {
+          email: existingUser.email === userData.email,
+          phone: existingUser.phone === userData.phone
+        }
       });
     }
 
-    // Create new user
+    // Create new user without password
     const newUser = new User(userData);
     const savedUser = await newUser.save();
+
+    // Generate JWT token
+    const token = generateToken(savedUser._id);
 
     // Clear OTP after successful registration
     otpStorage.delete(email);
 
-    return res.json({
+    return res.status(201).json({
       success: true,
       message: "OTP verified and user registered successfully",
+      token,
       user: {
         _id: savedUser._id,
         name: savedUser.name,
@@ -176,16 +257,20 @@ router.post('/verify-mail-otp', async (req, res) => {
     });
   } catch (dbError) {
     console.error("Database error:", dbError);
+    
     if (dbError.code === 11000) {
       const duplicateField = Object.keys(dbError.keyPattern)[0];
       return res.status(409).json({
         success: false,
         error: `User with this ${duplicateField} already exists`,
+        duplicateField
       });
     }
+    
     return res.status(500).json({
       success: false,
       error: "Failed to process user registration",
+      ...(process.env.NODE_ENV === 'development' && { details: dbError.message })
     });
   }
 });
@@ -224,23 +309,20 @@ const emailTemplates = {
 
 // Email Service Functions
 const sendInquiryNotification = async (values) => {
-  // Validate inputs first
   if (!values?.name?.trim() || !values?.email?.trim() || !values?.message?.trim()) {
     throw new Error('Missing required fields: name, email, or message');
   }
 
-  // Validate email format
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(values.email.trim())) {
     throw new Error('Invalid email address format');
   }
 
-  // Sanitize inputs
   const sanitizeInput = (input) => {
     if (!input) return '';
     return input.toString()
       .replace(/[\r\n]/g, '')
-      .replace(/<[^>]*>?/gm, '') // Basic HTML stripping
+      .replace(/<[^>]*>?/gm, '')
       .trim();
   };
 
@@ -249,38 +331,31 @@ const sendInquiryNotification = async (values) => {
   const safeMessage = sanitizeInput(values.message);
   const safePhone = values.phone ? sanitizeInput(values.phone) : 'Not provided';
 
-  // Validate email from env
   const fromEmail = process.env.EMAIL_FROM || 'no-reply@example.com';
   if (!emailRegex.test(fromEmail)) {
     throw new Error('Invalid sender email configuration');
   }
 
-  // Prepare email options
   const mailOptions = {
     from: `"${process.env.EMAIL_FROM_NAME || 'Notification System'}" <${fromEmail}>`,
     to: process.env.ADMIN_EMAIL || "subhamtours3@gmail.com",
-    subject: `New Inquiry: ${safeName.substring(0, 50)}`, // Limit length
+    subject: `New Inquiry: ${safeName.substring(0, 50)}`,
     html: emailTemplates.inquiryNotification({
       name: safeName,
       email: safeEmail,
       phone: safePhone,
-      message: safeMessage.substring(0, 1000) // Limit message length
+      message: safeMessage.substring(0, 1000)
     }),
     replyTo: `"${safeName}" <${safeEmail}>`,
     headers: {
-      'X-Priority': '1', // High priority
+      'X-Priority': '1',
       'X-Mailer': 'NodeMailer'
     }
   };
 
   try {
-    // Verify connection first
     await transporter.verify();
-    
-    // Send email
     const info = await transporter.sendMail(mailOptions);
-    
-    // Log success (consider using a proper logger in production)
     console.log(`Email sent to ${mailOptions.to}`, {
       messageId: info.messageId,
       envelope: info.envelope
@@ -293,14 +368,12 @@ const sendInquiryNotification = async (values) => {
       recipient: mailOptions.to
     };
   } catch (error) {
-    // Enhanced error logging
     console.error('Email send failed:', {
       error: error.message,
       stack: error.stack,
       recipient: mailOptions.to,
       time: new Date().toISOString()
     });
-
     throw new Error(`Failed to send notification: ${error.message}`);
   }
 };
@@ -323,36 +396,22 @@ const sendConfirmationEmail = async (email, name) => {
   }
 };
 
-// Routes
-router.post('/send-otp', otpLimiter, authController.sendOTP);
-router.post('/verify-otp', authController.verifyOTP);
-router.post('/login', authLimiter, authController.Login);
-router.get('/health', authController.health);
-
-// package route
-router.post('/add', packageControlller.createPackage);
-router.get('/package', packageControlller.getAllPackages);
-router.get('/package/:id',packageControlller.getPackageById)
-
 // Email Routes
 router.post('/send-inquiry', async (req, res) => {
-  const { email, name, phone, message,package } = req.body;
+  const { email, name, phone, message, package } = req.body;
   
   try {
-     const newInquiry = new Inquiry({
+    const newInquiry = new Inquiry({
       name,
       email,
-      phone: phone || undefined, // Store as undefined if not provided
+      phone: phone || undefined,
       message,
       package
     });
-      const savedInquiry = await newInquiry.save();
-   console.log('Inquiry saved to database:', savedInquiry._id);
+    const savedInquiry = await newInquiry.save();
+    console.log('Inquiry saved to database:', savedInquiry._id);
 
-    // Send to admin
-    await sendInquiryNotification({ email, name, phone, message,package });
-    
-    // Send to user
+    await sendInquiryNotification({ email, name, phone, message, package });
     await sendConfirmationEmail(email, name);
     
     res.json({ success: true, message: "Emails sent successfully" });
@@ -364,12 +423,12 @@ router.post('/send-inquiry', async (req, res) => {
     });
   }
 });
-// Add this with your other routes
-router.get('/inquiries', async (req, res) => {
+
+router.get('/inquiries', verifyToken, async (req, res) => {
   try {
     const inquiries = await Inquiry.find()
       .sort({ createdAt: -1 })
-      .select('-__v'); // Exclude version key
+      .select('-__v');
     
     res.json({ success: true, inquiries });
   } catch (error) {
@@ -379,13 +438,13 @@ router.get('/inquiries', async (req, res) => {
       error: "Failed to fetch inquiries" 
     });
   }
-  // Update inquiry status
-router.patch('/inquiries/:id/status', async (req, res) => {
+});
+
+router.patch('/inquiries/:id/status', verifyToken, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
 
-    // Validate input
     if (!status || !['new', 'in_progress', 'resolved'].includes(status)) {
       return res.status(400).json({
         success: false,
@@ -393,7 +452,6 @@ router.patch('/inquiries/:id/status', async (req, res) => {
       });
     }
 
-    // Check if inquiry exists
     const inquiry = await Inquiry.findById(id);
     if (!inquiry) {
       return res.status(404).json({
@@ -402,7 +460,6 @@ router.patch('/inquiries/:id/status', async (req, res) => {
       });
     }
 
-    // Update status
     inquiry.status = status;
     const updatedInquiry = await inquiry.save();
 
@@ -420,7 +477,6 @@ router.patch('/inquiries/:id/status', async (req, res) => {
   } catch (error) {
     console.error('Error updating inquiry status:', error);
     
-    // Handle different error types
     if (error.name === 'CastError') {
       return res.status(400).json({
         success: false,
@@ -435,7 +491,10 @@ router.patch('/inquiries/:id/status', async (req, res) => {
     });
   }
 });
-});
 
+// Health check route
+router.get('/health', (req, res) => {
+  res.json({ status: 'healthy', timestamp: new Date() });
+});
 
 module.exports = router;

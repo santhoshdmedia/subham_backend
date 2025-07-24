@@ -191,45 +191,35 @@ exports.verifyOTP = async (req, res) => {
   }
 };
 
-exports.Login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+// exports.Login = async (req, res) => {
+//   try {
+//     const { email } = req.body;
 
-    if (!email || !password) {
-      return res.status(400).json({
-        success: false,
-        error: "Please provide email and password"
-      });
-    }
+//     if (!email ) {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Please provide email and password"
+//       });
+//     }
+ 
+//     const token = generateToken(user._id);
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() })
-                          .select('+password');
-
-    if (!user || !(await user.comparePassword(password))) {
-      return res.status(401).json({
-        success: false,
-        error: "Incorrect email or password"
-      });
-    }
-
-    const token = generateToken(user._id);
-
-    res.status(200).json({
-      success: true,
-      token,
-      user: {
-        _id: user._id,
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        createdAt: user.createdAt
-      }
-    });
-  } catch (err) {
-    console.error("Login error:", err);
-    res.status(500).json({ success: false, error: "Internal server error" });
-  }
-};
+//     res.status(200).json({
+//       success: true,
+//       token,
+//       user: {
+//         _id: user._id,
+//         name: user.name,
+//         email: user.email,
+//         phone: user.phone,
+//         createdAt: user.createdAt
+//       }
+//     });
+//   } catch (err) {
+//     console.error("Login error:", err);
+//     res.status(500).json({ success: false, error: "Internal server error" });
+//   }
+// };
 
 // Auth middleware
 exports.protect = async (req, res, next) => {
