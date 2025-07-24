@@ -123,14 +123,8 @@ router.post('/send-mail-otp', otpLimiter, async (req, res) => {
 
   // Check if user already exists
   try {
-    const existingUser = await User.findOne({ email });
     
-    if (existingUser) {
-      return res.status(400).json({ 
-        success: false, 
-        error: "User with this email already exists" 
-      });
-    }
+   
 
     // Generate and store OTP
     const otp = generateOTP();
@@ -205,34 +199,39 @@ router.post('/verify-mail-otp', async (req, res) => {
     });
   }
 
-  // OTP is valid, proceed with registration
+  // OTP is valid, check if user exists
   try {
-    const userData = { 
-      name: name.trim(),
-      email: email.toLowerCase().trim(),
-      phone: phone.trim()
-    };
-
-    // Check if user exists
-    const existingUser = await User.findOne({
-      $or: [
-        { phone: userData.phone },
-        { email: userData.email }
-      ],
-    });
+    const normalizedEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: normalizedEmail });
 
     if (existingUser) {
-      return res.status(409).json({
-        success: false,
-        error: "User already exists with this phone/email",
-        conflict: {
-          email: existingUser.email === userData.email,
-          phone: existingUser.phone === userData.phone
-        }
+      // User exists - generate token and return user data
+      const token = generateToken(existingUser._id);
+      
+      // Clear OTP after successful verification
+      otpStorage.delete(email);
+
+      return res.status(200).json({
+        success: true,
+        message: "OTP verified successfully",
+        token,
+        user: {
+          _id: existingUser._id,
+          name: existingUser.name,
+          email: existingUser.email,
+          phone: existingUser.phone,
+        },
+        isNewUser: false, // Indicates existing user
       });
     }
 
-    // Create new user without password
+    // User doesn't exist - create new user
+    const userData = { 
+      name: name.trim(),
+      email: normalizedEmail,
+      phone: phone.trim()
+    };
+
     const newUser = new User(userData);
     const savedUser = await newUser.save();
 
@@ -256,20 +255,9 @@ router.post('/verify-mail-otp', async (req, res) => {
     });
   } catch (dbError) {
     console.error("Database error:", dbError);
-    
-    if (dbError.code === 11000) {
-      const duplicateField = Object.keys(dbError.keyPattern)[0];
-      return res.status(409).json({
-        success: false,
-        error: `User with this ${duplicateField} already exists`,
-        duplicateField
-      });
-    }
-    
     return res.status(500).json({
       success: false,
       error: "Failed to process user registration",
-      ...(process.env.NODE_ENV === 'development' && { details: dbError.message })
     });
   }
 });
