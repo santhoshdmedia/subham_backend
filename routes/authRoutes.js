@@ -7,6 +7,7 @@ require('dotenv').config();
 const jwt = require("jsonwebtoken");
 const User = require('../models/UserOtp');
 const Inquiry = require('../models/email');
+const PackageController=require('../controllers/packageController')
 
 // Rate limiting configuration
 const otpLimiter = rateLimit({
@@ -494,5 +495,8 @@ router.patch('/inquiries/:id/status', verifyToken, async (req, res) => {
 router.get('/health', (req, res) => {
   res.json({ status: 'healthy', timestamp: new Date() });
 });
+
+router.get('/package',PackageController.getAllPackages)
+router.get('/package/:id',PackageController.getPackageById)
 
 module.exports = router;
