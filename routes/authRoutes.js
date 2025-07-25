@@ -411,7 +411,7 @@ router.post('/send-inquiry', async (req, res) => {
   }
 });
 
-router.get('/inquiries', verifyToken, async (req, res) => {
+router.get('/inquiries', async (req, res) => {
   try {
     const inquiries = await Inquiry.find()
       .sort({ createdAt: -1 })
@@ -427,7 +427,7 @@ router.get('/inquiries', verifyToken, async (req, res) => {
   }
 });
 
-router.patch('/inquiries/:id/status', verifyToken, async (req, res) => {
+router.patch('/inquiries/:id/status',  async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
